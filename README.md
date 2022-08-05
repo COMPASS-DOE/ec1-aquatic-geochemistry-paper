@@ -5,3 +5,6 @@ How do carbon and nutrient concentrations/speciation vary across gradients in na
 
 #### Lead Author: 
 Opal Otenburg; opal.otenburg@pnnl.gov
+
+#### Corresponding Author: 
+Allison Myers-Pigg; allison.myers-pigg@pnnl.gov

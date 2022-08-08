@@ -4,27 +4,51 @@ author: "Stephanie Pennington"
 date: "2022-08-08"
 output: html_document
 ---
+Make sure you are in the R project ec1-aquatic-geochemistry-paper.Rproj before running this code!! 
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{R Load in Data Rda}
+aqgeo = readRDS("./aqua_geochem_data.rds")
 ```
 
-## R Markdown
+(1) Check for duplicates
+(2) Make the list data frames
+(3) Remove flagged items ('below detect', 'npoc outside of range','tdn outside of range', 'outside range', etc)
+(4) select relevant numerical rows + kit id 
+(5) Merge dataframes with numerical data by kit id and make the kit_id the row name 
+(6) Confirm all variables are numerical in the data frame
+(7) Make another data frame with the numerical data and metadata. Take dataframe fromm #5 and merge with metadata dataframe by kit_id
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```{R Prep for PCA}
+library(tidyverse)
+wq = aqgeo$water_quality %>% select(kit_id,sal_psu,ph,orp_mv,alk_mgl_caco3)
+doc = aqgeo$npoc_doc_tdn %>% select(kit_id,npoc_mgl,tdn_mgl)
+ions = aqgeo$ions %>% select(kit_id, )
+cdom = aqgeo$cdom %>% select(kit_id, )
+spectral_indicies = aqgeo$spectral_indices %>% select(kit_id, )
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+%>% column_to_rownames(var="kit_id")
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{R PCA}
+aqgeo_pc <- prcomp(df, retx=T, center=T, scale. = T)
+# labels returned in R are not the same as what we use in PCA, so we changed the names for analysis. 
+std_vars <- data.frame(df$sdev)
+loadings <- data.frame(df$rotation)
+rownames(loadings) <- colnames(df)
+scores <- data.frame(df$x)
+variance <- data.frame(std_vars^2)
+per_variance <- variance/sum(variance) * 100
+biplot(df) 
+summary(df) # This gives the variance explained by each component
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{R PCA biplot}
+library(ggplot2)
+library(ggfortify)
+
+biplot <-autoplot(PCA, data = df, colour = 'categorical variable 1', shape= "categorical variable 2", size=2,
+                          loadings = TRUE, loadings.colour = 'black',
+                          loadings.label = TRUE, loadings.label.size = 3)+
+  scale_shape_manual(values=c(16,17,18,15))
+print(biplot)
+```

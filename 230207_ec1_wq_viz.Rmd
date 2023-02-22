@@ -42,7 +42,8 @@ cause I already have the code for pulling from the GD, and too lazy to find the 
 ## This is KEY: it avoids user input, and will automatically find the token. 
 ## This has, I think, timed out before. If so, just run drive_auth() and select
 ## the proper email.
-options(gargle_oauth_email = "peter.regier@pnnl.gov")
+#options(gargle_oauth_email = "peter.regier@pnnl.gov")
+options(gargle_oauth_email = "allison.myers-pigg@pnnl.gov")
 
 ## Set two paths for the two folders with data we want
 data_path <- "https://drive.google.com/drive/folders/1r3sP7tvhG2btZACvxZUdtrtSiLVGUUGp"

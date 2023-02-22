@@ -1,0 +1,206 @@
+---
+title: "EC1 water quality visualizations"
+author: "PR"
+date: '2023-02-07'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message = FALSE, warnings = FALSE)
+```
+
+
+```{r Setup}
+# 1. Setup ---------------------------------------------------------------------
+
+## Load packages
+require(pacman)
+p_load(tidyverse, ## keep things tidy
+       cowplot,
+       corrplot,
+       googledrive) ## download files from google drive
+
+## Set up common columns that are routinely used to in select() and join() calls
+common_cols = c("kit_id", "transect_location")
+
+## Set ggplot theme
+theme_set(theme_bw())
+```
+
+## Thoughts
+
+I don't like Rmd, but I"m doing my best to share my thoughts with my plots since
+I'll be out, and this seems like the best format for that. My goal here
+is to show what the wq data look like, and explore in some formats that I think 
+might be important for visualizing the ions/npoc data. Hopefully something in here
+is useful! Please note I'm using L0B here, but the only difference is that flags
+are removed for L2, so I'll remove flagged items prior to any analysis. Doing this
+cause I already have the code for pulling from the GD, and too lazy to find the L2.
+
+
+```{r Bring in data, include=FALSE}
+## This is KEY: it avoids user input, and will automatically find the token. 
+## This has, I think, timed out before. If so, just run drive_auth() and select
+## the proper email.
+options(gargle_oauth_email = "peter.regier@pnnl.gov")
+
+## Set two paths for the two folders with data we want
+data_path <- "https://drive.google.com/drive/folders/1r3sP7tvhG2btZACvxZUdtrtSiLVGUUGp"
+metadata_path <- "https://drive.google.com/drive/folders/1IQUq_sD-Jama7ajaZl1zW_9zlWfyCohn"
+
+## Bring in the files you want
+file <- drive_ls(data_path) %>% 
+  filter(grepl("WaterQuality", name)) %>% 
+  pull(name)
+
+metadata <- drive_ls(metadata_path) 
+
+
+## Now download file to your local
+drive_download(file, overwrite = T)
+lapply(metadata$name, drive_download, overwrite = T)
+
+## Last, import data
+wq_raw <- read_csv(file)
+
+kit_metadata = read_csv(metadata$name[[1]])
+collection_metadata = read_csv(metadata$name[[3]])
+```
+
+
+```{r Purge flagged data}
+
+# do it the lazy way
+wq_cleaned <- wq_raw %>% 
+  filter(is.na(sal_flag)) %>% 
+  filter(is.na(ph_flag)) %>% 
+  filter(is.na(orp_flag)) %>% 
+  filter(is.na(alk_flag)) %>% 
+  select(-contains("_flag"))
+
+## Bring in metadata
+wq_md <- inner_join(kit_metadata %>% select(kit_id, region), 
+                    collection_metadata %>% select(kit_id, water_latitude, water_longitude, 
+                                                   water_systemtype, wetland_soil_horizon), 
+                    by = "kit_id")
+
+## Join data and metadata
+wq <- inner_join(wq_cleaned, wq_md, by = "kit_id")
+
+```
+
+## Distributions
+
+First off, visualizing distributions, our samples skew pretty heavily towards 
+fresh/brackish, but we've got a good range from ~0 to seawater. pH is circumneutral, which, sure, don't know what that tells us. ORP is consistently high, and I'm not putting a ton of stock in that, surface waters should be oxic, plus time for equilibration with headspace during transit plus sitting on the titrator waiting to be run = oxygenation. Don't have a point of reference for alkalinity, but seems like a decent spread with values significantly below and above average seawater (100-130 according to google).
+
+```{r}
+
+## Simple helper function
+make_density_plot <- function(var){
+  
+  p0 <- ggplot(wq, aes({{var}})) + 
+    geom_histogram(alpha = 0.5)
+  
+  p1 <-  ggplot(wq, aes(1, {{var}})) + 
+    geom_boxplot(alpha = 0.5)
+  
+  plot_grid(p0, p1, rel_widths = c(1, 0.5))
+}
+
+plot_grid(make_density_plot(sal_psu), 
+          make_density_plot(ph), 
+          make_density_plot(orp_mv), 
+          make_density_plot(alk_mgl_caco3))
+
+```
+
+## Correlations
+
+Looking at how these factors relate, the strongest correlation is alkalinity and orp (R = -0.42) followed by alkalinity and pH (R = 0.40). I'm a little surprised by the lack of a relationship between salinity and pH, but maybe that's because there are so many low-salinity samples. 
+
+Interestingly, pretty strong latitudinal and longitudinal correlations. These are likely cause we have two groups: saltier sites at lower lat and higher long, and vice versa. Doesn't quite make sense with pH, but I'd imagine that some of the marshes have super high organics, so lower pH even with higher salinity would make sense. Moral of the story I see here is spatial patterns might be important, but should tease out by region to check.
+```{r}
+wq %>% 
+  select(is.numeric) %>% 
+  cor %>% 
+  corrplot(method = "number")
+```
+
+## Great Lakes correlations
+
+For just the great lakes, really strong positive correlation between salinity and alkalinity, and the lat/long relationships to salinity also held. 
+
+```{r}
+wq %>% 
+  filter(region == "Great Lakes") %>% 
+  select(is.numeric) %>% 
+  cor %>% 
+  corrplot(method = "number")
+```
+
+## Chesapeake Bay correlations
+
+For CB sites, we lose the correlation to longitude, though there's still a pretty clear correlation to latitude (saltier as you move South towards the bay mouth .... duh). Interesting to me is that alkalinity and orp have a strong negative correlation here, and orp doesn't correlate to anything else. Not sure what that means, since there isn't a clear relationship to salinity. maybe alkalinity hints at bedrock composition, which controls infiltration/drainage rates related to redox? That's a stretch...
+
+```{r}
+wq %>% 
+  filter(region != "Great Lakes") %>% 
+  select(is.numeric) %>% 
+  cor %>% 
+  corrplot(method = "number")
+```
+
+## A quick PCA
+
+To understand how water quality parameters relate, and how they differ between regions, I plotted as a PCA. PC1 seems to be alkalinity v ORP, and PC2 seems to be salinity v pH. Interesting that we get clear separation between almost all sites by region along PC2. 
+
+```{r}
+
+## Load relevant packages
+p_load(ggfortify,
+       ggConvexHull)
+
+## Make PCA
+pca1 <- prcomp(wq %>% dplyr::select(sal_psu, ph, orp_mv, alk_mgl_caco3) %>% drop_na(), scale. = TRUE)
+
+## Plot PCA
+autoplot(pca1, data = wq, colour = 'region', 
+         loadings = TRUE, loadings.label = TRUE, loadings.label.size = 3) +
+  geom_convexhull(aes(group = region, fill = region), alpha = 0.2) +
+  scale_color_viridis_d() + 
+  scale_fill_viridis_d() 
+
+```
+
+
+## PCA by region
+
+Out of curiosity, how do these relationships differ between region? Not a very appropriate use of PCA, but interesting to see that there are differing relationships by region. I think, depending on what the question is, PCAs by region that show differing relationships might be pretty interesting, and a good way to look at a bunch of different types of data together on one space. 
+
+```{r}
+## Make PCA
+pca_gl <- prcomp(wq %>% filter(region == "Great Lakes") %>% 
+                   dplyr::select(sal_psu, ph, orp_mv, alk_mgl_caco3) %>% drop_na(), scale. = TRUE)
+
+pca_cb <- prcomp(wq %>% filter(region != "Great Lakes") %>% 
+                   dplyr::select(sal_psu, ph, orp_mv, alk_mgl_caco3) %>% drop_na(), scale. = TRUE)
+
+## Plot PCA
+gl <- autoplot(pca_gl, data = wq %>% filter(region == "Great Lakes"), 
+         loadings = TRUE, loadings.label = TRUE, loadings.label.size = 3) + 
+  ggtitle("Great Lakes")
+
+cb <- autoplot(pca_cb, data = wq %>% filter(region != "Great Lakes"), 
+         loadings = TRUE, loadings.label = TRUE, loadings.label.size = 3) + 
+  ggtitle("Chesapeake Bay")
+
+plot_grid(gl, cb, nrow = 1)
+
+```
+
+
+
+
+
+
